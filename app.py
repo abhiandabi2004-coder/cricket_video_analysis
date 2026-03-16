@@ -8,41 +8,25 @@ import random
 
 st.title("🏏 Cricket AI Batting Analyzer")
 
+# --------------------------------
+# Upload Video
+# --------------------------------
+
 uploaded_file = st.file_uploader("Upload Batting Video", type=["mp4","mov","avi"])
 
-mp_pose = mp.solutions.pose
-pose = mp_pose.Pose()
-
-# -----------------------------
-# Angle Calculation
-# -----------------------------
-
-def calculate_angle(a,b,c):
-
-    a=np.array(a)
-    b=np.array(b)
-    c=np.array(c)
-
-    radians=np.arctan2(c[1]-b[1],c[0]-b[0])-np.arctan2(a[1]-b[1],a[0]-b[0])
-    angle=np.abs(radians*180/np.pi)
-
-    if angle>180:
-        angle=360-angle
-
-    return angle
-
-
-# -----------------------------
-# Field Placement UI
-# -----------------------------
+# --------------------------------
+# Field Placement Section
+# --------------------------------
 
 st.subheader("⚙ Field Placement Simulator")
 
-fielder_count = st.slider("Number of fielders",1,11,5)
+fielder_count = st.slider("Number of Fielders",1,11,5)
+
+fielder_positions=[]
 
 fig = go.Figure()
 
-# batsman position
+# batsman
 fig.add_trace(go.Scatter(
     x=[0],
     y=[0],
@@ -50,9 +34,6 @@ fig.add_trace(go.Scatter(
     marker=dict(size=20,color="red"),
     name="Batsman"
 ))
-
-# random fielders (user concept demo)
-fielder_positions=[]
 
 for i in range(fielder_count):
 
@@ -78,10 +59,48 @@ fig.update_layout(
 
 st.plotly_chart(fig)
 
+# --------------------------------
+# Angle Function
+# --------------------------------
 
-# -----------------------------
-# Video Analysis
-# -----------------------------
+def calculate_angle(a,b,c):
+
+    a=np.array(a)
+    b=np.array(b)
+    c=np.array(c)
+
+    radians=np.arctan2(c[1]-b[1],c[0]-b[0]) - np.arctan2(a[1]-b[1],a[0]-b[0])
+    angle=np.abs(radians*180/np.pi)
+
+    if angle>180:
+        angle=360-angle
+
+    return angle
+
+
+# --------------------------------
+# Run Prediction
+# --------------------------------
+
+def predict_runs(direction, fielders):
+
+    if direction=="Cover":
+
+        if len(fielders)<3:
+            return random.choice([4,4,2,1])
+        else:
+            return random.choice([0,1,1])
+
+    elif direction=="Straight":
+        return random.choice([1,2])
+
+    else:
+        return random.choice([0,1])
+
+
+# --------------------------------
+# Video Processing
+# --------------------------------
 
 if uploaded_file:
 
@@ -101,82 +120,79 @@ if uploaded_file:
         head_moves=[]
         prev_nose=None
 
-        max_frames=80
+        max_frames=60
 
-        while cap.isOpened() and frame_count<max_frames:
+        mp_pose = mp.solutions.pose
 
-            ret,frame=cap.read()
+        with mp_pose.Pose() as pose:
 
-            if not ret:
-                break
+            while cap.isOpened() and frame_count < max_frames:
 
-            frame_count+=1
+                ret,frame=cap.read()
 
-            if frame_count%8!=0:
-                continue
+                if not ret:
+                    break
 
-            rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
-            results=pose.process(rgb)
+                frame_count+=1
 
-            if results.pose_landmarks:
+                if frame_count % 10 != 0:
+                    continue
 
-                landmarks=results.pose_landmarks.landmark
+                rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+                results=pose.process(rgb)
 
-                shoulder=[landmarks[11].x,landmarks[11].y]
-                elbow=[landmarks[13].x,landmarks[13].y]
-                wrist=[landmarks[15].x,landmarks[15].y]
+                if results.pose_landmarks:
 
-                angle=calculate_angle(shoulder,elbow,wrist)
+                    landmarks=results.pose_landmarks.landmark
 
-                swing_angles.append(angle)
+                    shoulder=[landmarks[11].x,landmarks[11].y]
+                    elbow=[landmarks[13].x,landmarks[13].y]
+                    wrist=[landmarks[15].x,landmarks[15].y]
 
-                nose=landmarks[0]
+                    angle=calculate_angle(shoulder,elbow,wrist)
 
-                if prev_nose:
-                    head_moves.append(abs(prev_nose-nose.x))
+                    swing_angles.append(angle)
 
-                prev_nose=nose.x
+                    nose=landmarks[0]
+
+                    if prev_nose:
+                        head_moves.append(abs(prev_nose-nose.x))
+
+                    prev_nose=nose.x
 
         cap.release()
 
         avg_angle=np.mean(swing_angles) if swing_angles else 0
         head_move=np.mean(head_moves) if head_moves else 0
 
-
-# -----------------------------
+# --------------------------------
 # Technique Analysis
-# -----------------------------
+# --------------------------------
 
         if head_move<0.02:
             head_status="Stable"
         else:
             head_status="Unstable"
 
-        if avg_angle>40:
+        if avg_angle>45:
             shot="Cover Drive"
-            direction="Cover Region"
+            shot_direction="Cover"
+        elif avg_angle>25:
+            shot="Square Shot"
+            shot_direction="Point"
         else:
             shot="Straight Drive"
-            direction="Straight"
+            shot_direction="Straight"
 
+# --------------------------------
+# Run Prediction
+# --------------------------------
 
-# -----------------------------
-# Run Prediction Engine
-# -----------------------------
+        runs = predict_runs(shot_direction,fielder_positions)
 
-        runs=0
-
-        if direction=="Cover Region" and fielder_count<3:
-            runs=random.choice([4,4,2,1])
-        elif direction=="Cover Region":
-            runs=random.choice([0,1,1])
-        else:
-            runs=random.choice([1,2])
-
-
-# -----------------------------
+# --------------------------------
 # Technique Score
-# -----------------------------
+# --------------------------------
 
         score=0
 
@@ -186,30 +202,29 @@ if uploaded_file:
         if 40<avg_angle<70:
             score+=4
 
-        if fielder_count<5:
+        if fielder_count<6:
             score+=3
 
-
-# -----------------------------
-# Output Dashboard
-# -----------------------------
+# --------------------------------
+# Dashboard Output
+# --------------------------------
 
         st.success(f"Processing complete! Frames analyzed: {frame_count}")
 
         st.subheader("🏏 Technique Analysis")
 
-        st.write("Shot Type:",shot)
-        st.write("Head Stability:",head_status)
-        st.write("Backlift Angle:",round(avg_angle,2))
+        st.metric("Shot Type",shot)
+        st.metric("Head Stability",head_status)
+        st.metric("Backlift Angle",round(avg_angle,2))
 
         st.subheader("🎯 Shot Prediction")
 
-        st.write("Shot Direction:",direction)
+        st.metric("Shot Direction",shot_direction)
 
         st.subheader("📊 Run Prediction")
 
-        st.write("Predicted Runs:",runs)
+        st.metric("Predicted Runs",runs)
 
         st.subheader("⭐ Technique Score")
 
-        st.write(score,"/10")
+        st.metric("Score",f"{score}/10")
